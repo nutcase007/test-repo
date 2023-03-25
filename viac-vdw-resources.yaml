@@ -1,0 +1,1357 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+
+Description: >-
+  This template creates VDW resources
+
+Parameters:
+
+  EnvironmentType:
+    Description: Environment where we are creating resources
+    Type: String
+    AllowedValues:
+      - dev
+      - dev-dr
+      - intg
+      - accp
+      - prod
+      - dr
+    Default: dev
+
+  # Require app name starts with viac-vdw-
+  ProjectName:
+    Description: Application Name
+    Type: String
+    AllowedPattern: "^viac-vdw-+[a-zA-Z0-9-]+[a-zA-Z0-9]+$"
+    ConstraintDescription: The Project Name must begin with viac-vdw-
+    Default: "viac-vdw-val"
+
+  NumberOfNodes:
+    Description: >-
+      The number of compute nodes in the cluster. For multi-node clusters, the
+      NumberOfNodes parameter must be greater than 1
+    Type: Number
+    Default: '2'
+
+  ClusterPassword:
+    Description: The password for the redshift cluster admin user.  Leave this empty to auto-generate password
+    Type: String
+    NoEcho: true
+    Default: ''
+
+#  SublgrRSTablePrefix:
+#    Description: The prefix added to the names of tables that are created.
+#    Type: String
+#    Default: vdw-rs
+
+#  SublgrS3TablePrefix:
+#    Description: The prefix added to the names of tables that are created.
+#    Type: String
+#    Default: vdw-s3
+
+#  GlueDatabaseName:
+#    Type: String
+#    Description: The name of the database in which all crawler's output is stored.
+#    Default: redshift-vdw
+
+  CreateGlueDB:
+    Description: >-
+      Creates the Glue DB.  Only needed if the Glue DB doesn't exist in the RS
+      cluster already
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Mappings:
+  Vpc:
+    dev:
+      id: 'vpc-011dfc8a6adbce0a8'
+    dev-dr:
+      id: 'vpc-0383b7141bcb3e247'
+    intg:
+      id: 'vpc-0ff6afcac468ff8b6'
+    intg-dr:
+      id: 'vpc-0ebec0ea2b30dc600'
+    accp:
+      id: 'vpc-00dbf806d46451684'            
+    prod:
+      id: 'vpc-03b1aee6ac65b46f4'    
+    dr:
+      id: 'vpc-064037701f74ea74d'    
+
+  NodeType:
+      dev:
+        id: 'dc2.large'
+      intg:
+        id: 'dc2.large'
+      prod:
+        id: 'ra3.xlplus'
+      dev-dr:
+        id: 'dc2.large'
+      intg-dr:
+        id: 'dc2.large'
+      dr:
+        id: 'ra3.xlplus'
+
+  KmsMasterKeyId:
+    dev:
+      id: '86eb3cd8-7908-4441-9d7c-84915072c358'
+    dev-dr: 
+      id: 'aadad65d-064c-4e43-b8b1-a97aac593f93'
+    intg: 
+      id: 'ca1c952f-501f-40f5-9731-523e7aee6d5b'
+    intg-dr: 
+      id: 'a38082b9-2317-4771-ad06-7c015d156d83'
+    prod: 
+      id: '673569ee-92a5-4805-860f-61173102a296'
+    dr: 
+      id: '6a204f96-048b-4d36-a7d6-2d1970b79108'
+
+# snapshot ID's will be filled at the time of template execution
+  SnapshotIdentifier:
+    dev:
+      id: 'snapshot-09072022'
+    dev-dr: 
+      id: 'copy:viac-vdw-v1-dev-full'
+    intg: 
+      id: ''
+    intg-dr: 
+      id: ''
+    prod: 
+      id: ''
+    dr: 
+      id: 'copy:rs:vdw-rs-cluster-redshiftcluster-1x7z286jrgq3z-2023-03-14-16-56-15'
+
+  LambdaOutSecurityGroup:
+    dev:
+      id: 'sg-0ead0094a06a78e59'
+    dev-dr: 
+      id: 'sg-034c8c9a6134aaa14'
+    intg: 
+      id: 'sg-0ad4a6e61027a7fb3'
+    intg-dr: 
+      id: 'sg-06126ebd4fdf67fd4'
+    prod: 
+      id: 'sg-05e039be45f55b727'
+    dr: 
+      id: 'sg-0498e181b9414db05'
+
+  RedshiftSecurityGroup:
+    dev:
+      id: 'sg-0ead0094a06a78e59'
+    dev-dr: 
+      id: 'sg-034c8c9a6134aaa14'
+    intg: 
+      id: 'sg-0ad4a6e61027a7fb3'
+    intg-dr: 
+      id: 'sg-06126ebd4fdf67fd4'
+    prod: 
+      id: 'sg-05e039be45f55b727'
+    dr: 
+      id: 'sg-0498e181b9414db05'
+
+  LambdaRSSubnets:
+    dev:
+      id:
+        - 'subnet-09cf215138d7c6ba5'
+        - 'subnet-0664025e7bd2df88f'
+    dev-dr: 
+      id: 
+        - 'subnet-0da6bec705c1c4798'
+        - 'subnet-067bdd28666447eda'
+    intg: 
+      id: 
+        - 'subnet-0eac74aa72995e536'
+        - 'subnet-0249134d9d7669763'
+    intg-dr: 
+      id: 
+        - 'subnet-03b4319bd66544bf6'
+        - 'subnet-05c612847408d2464'
+    prod: 
+      id: 
+        - 'subnet-0e4ac4bdcd94a15b2'
+        - 'subnet-0fb4d816cbca1cb22'
+    dr: 
+      id: 
+        - 'subnet-0242004b0310003f5'
+        - 'subnet-0730151a185a81673'
+
+  GlueDBAvailabilityZone:
+    dev:
+      id: 'us-east-1a'
+    dev-dr: 
+      id: 'us-west-2a'
+    intg: 
+      id: 'us-east-1a'
+    intg-dr: 
+      id: 'us-west-2a'
+    prod: 
+      id: 'us-east-1a'
+    dr: 
+      id: 'us-west-2a'
+
+  GlueSubnetId:
+    dev:
+      id: 'subnet-0be2d07a563bb496a'
+    dev-dr: 
+      id: 'subnet-0ae379759f342ff78'
+    intg: 
+      id: 'subnet-0bc96c6f73414e9f3'
+    intg-dr: 
+      id: 'subnet-01f249b6995556e9a'
+    prod: 
+      id: ''
+    dr: 
+      id: 'subnet-0469c926218c9cda1'
+
+  AWSLayerId:
+    dev:
+      id: '668099181075'
+    dev-dr:
+      id: '420165488524'
+    intg:
+      id: '668099181075'
+    intg-dr:
+      id: '420165488524'
+    prod:
+      id: '668099181075'
+    dr:
+      id: '420165488524'
+
+Conditions:
+  UseSnapshot: !Not
+    - !Equals
+      - !FindInMap [SnapshotIdentifier, !Ref EnvironmentType, id]
+      - ''
+
+  GeneratePassword: !Equals
+    - !Ref ClusterPassword
+    - ''
+
+  SpecifyPassword: !Not
+    - Condition: GeneratePassword
+
+  CreateGlueDB: !Equals
+    - !Ref CreateGlueDB
+    - 'true'
+
+  isDev: !Equals [!Ref EnvironmentType, "dev"]
+
+Resources:
+  RSSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Description: "Creds for Redshift"
+      GenerateSecretString: !If
+        - GeneratePassword
+        -
+          SecretStringTemplate:  !Join ['', ['{"username":"', !If [isDev, "vdwuser", "admin"], '"}']]
+          GenerateStringKey: "password"
+          PasswordLength: 12
+          ExcludeCharacters: '"@/\'
+        - !Ref "AWS::NoValue"
+      SecretString: !If
+        - SpecifyPassword
+        - !Join ['', ['{"username":"', !If [isDev, "vdwuser", "admin"], !Sub '","password":"${ClusterPassword}"}']]
+        - !Ref "AWS::NoValue"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  JDBCSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Name: !Sub "${ProjectName}-JDBCSecret-${EnvironmentType}"
+      Description: "Creds for glue connection"
+      SecretString: !If
+        - SpecifyPassword
+        - !Join
+          - ""
+          - - '{"username":"'
+            - !If [isDev, "vdwuser", "admin"]
+            - !Sub '","password":"${ClusterPassword}", "engine": "redshift", "host": "'
+            - !GetAtt
+              - RedshiftCluster
+              - Endpoint.Address
+            - '","port": '
+            - !GetAtt
+              - RedshiftCluster
+              - Endpoint.Port
+            - !Sub ',"dbClusterIdentifier": "${ProjectName}-rs-cluster-${EnvironmentType}"}'
+        - !Join
+          - ""
+          - - '{"username":"'
+            - !If [isDev, "vdwuser", "admin"]
+            - '","password":"'
+            - !Join ["", ["{{resolve:secretsmanager:", !Ref RSSecret, ":SecretString:username}}" ]]
+            - '", "engine": "redshift", "host": "'
+            - !GetAtt
+              - RedshiftCluster
+              - Endpoint.Address
+            - '","port": '
+            - !GetAtt
+              - RedshiftCluster
+              - Endpoint.Port
+            - !Sub ',"dbClusterIdentifier": "${ProjectName}-rs-cluster-${EnvironmentType}"}'
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+  RedshiftCluster:
+    Type: 'AWS::Redshift::Cluster'
+    DependsOn:
+      - RedshiftClusterParameterGroup
+    Properties:
+      ClusterIdentifier: !Sub "${ProjectName}-rs-cluster-${EnvironmentType}"
+      NumberOfNodes: !Ref NumberOfNodes
+      NodeType: !FindInMap [NodeType, !Ref EnvironmentType, id]
+      DBName: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref RSSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref RSSecret, ':SecretString:password}}' ]]
+      ClusterParameterGroupName: !Ref RedshiftClusterParameterGroup
+      VpcSecurityGroupIds:
+        - !FindInMap [RedshiftSecurityGroup, !Ref EnvironmentType, id]
+      ClusterSubnetGroupName: !Ref RedshiftClusterSubnetGroup
+      ClusterType: multi-node
+      PubliclyAccessible: 'false'
+      Port: 5439
+      Encrypted: true
+      SnapshotIdentifier: !If
+        - UseSnapshot
+        - !FindInMap [SnapshotIdentifier, !Ref EnvironmentType, id]
+        - !Ref 'AWS::NoValue'
+      IamRoles:
+        - !Sub arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  RedshiftClusterParameterGroup:
+    Type: 'AWS::Redshift::ClusterParameterGroup'
+    Properties:
+      Description: Cluster parameter group
+      ParameterGroupFamily: redshift-1.0
+      Parameters:
+        - ParameterName: enable_user_activity_logging
+          ParameterValue: 'true'
+
+  RedshiftClusterSubnetGroup:
+    Type: 'AWS::Redshift::ClusterSubnetGroup'
+    Properties:
+      Description: Cluster subnet group
+      SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+
+  ######################################################## Glue DB Config ###############################
+
+  GlueConnection:
+    Type: 'AWS::Glue::Connection'
+    DependsOn:
+      - RedshiftCluster
+      - RedshiftClusterParameterGroup
+    Properties:
+      CatalogId: !Ref 'AWS::AccountId'
+      ConnectionInput:
+        Description: JDBC Connection to RS
+        ConnectionType: JDBC
+        ConnectionProperties:
+          JDBC_CONNECTION_URL: !Join
+            - ""
+            - - 'jdbc:redshift://'
+              - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+              - ':'
+              - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Port
+              - '/'
+              - !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          USERNAME: !Join ['', ['{{resolve:secretsmanager:', !Ref JDBCSecret, ':SecretString:username}}' ]]
+          PASSWORD: !Join ['', ['{{resolve:secretsmanager:', !Ref JDBCSecret, ':SecretString:password}}' ]]
+        Name: !Sub "${ProjectName}-gluecon-redshiftcluster-${EnvironmentType}"
+        PhysicalConnectionRequirements:
+          AvailabilityZone:
+            !FindInMap [GlueDBAvailabilityZone, !Ref EnvironmentType, id]
+          SecurityGroupIdList:
+            - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+          SubnetId:
+            !FindInMap [GlueSubnetId, !Ref EnvironmentType, id]
+
+  GlueDatabase:
+    Type: 'AWS::Glue::Database'
+    Condition: CreateGlueDB
+    Properties:
+      CatalogId: !Ref 'AWS::AccountId'
+      DatabaseInput:
+        Name: redshift-vdw
+        #Name: !Sub "${ProjectName}-redshift-${EnvironmentType}"
+
+  SubLedgerGlueJob:
+    Type: 'AWS::Glue::Job'
+    Properties:
+      Command:
+        Name: glueetl
+        ScriptLocation: !Sub "s3://${ProjectName}-app-${EnvironmentType}/viac-vdw-v1-gluejob-sublgr-dr/viac-vdw-v1-gluejob-sublgr-dr.py"
+      Connections:
+        Connections:
+          - !Sub "${ProjectName}-gluecon-redshiftcluster-${EnvironmentType}"
+      DefaultArguments:
+        '--job-bookmark-option': job-bookmark-disable
+        '--TempDir': !Sub "s3://${ProjectName}-app-${EnvironmentType}/gluetemp/"
+        '--job-language': python
+      ExecutionProperty:
+        MaxConcurrentRuns: 20
+      MaxCapacity: 12
+      GlueVersion: "3.0"
+      MaxRetries: 0
+      Name: !Sub "${ProjectName}-gluejob-sublgr-${EnvironmentType}"
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-glue-role-${EnvironmentType}'
+      Tags:
+        VOPS_CMDBAppName: "Venerable Data Warehouse"
+        VOPS_SUB_AppName: "VDW"
+        VOPS_Short_Term: "N"
+        VOPS_Region: !Ref "AWS::Region"
+        VOPS_Environment: !Ref "EnvironmentType"
+
+
+  ############################# Lambda Functions #######################################
+
+  AllianzTaxMonthlyLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-allianz_tax_data_monthly-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-allianz_tax_data_monthly-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 128
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  AllianzTaxMonthlyScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-allianz_tax_data_monthly-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(0 21 1 * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - AllianzTaxMonthlyLambdaFunction
+            - Arn
+          Id: AllianzTaxMonthlyLambdaSchedule
+
+  AllianzTaxMonthlyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - AllianzTaxMonthlyLambdaFunction
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - AllianzTaxMonthlyScheduledRule
+        - Arn
+
+  PostedStatusLoadLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-postedstatus-load-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-postedstatus-load-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 1024
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 900
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+#  PostedStatusLoadScheduledRule:
+#    Type: 'AWS::Events::Rule'
+#    Properties:
+#      Name: !Sub "${ProjectName}-schedule-postedstatus-load-${EnvironmentType}"
+#      Description: ScheduledRule
+#      ScheduleExpression: cron(0 21 1 * ? *)
+#      State: ENABLED
+#      Targets:
+#        - Arn: !GetAtt
+#            - PostedStatusLoadLambdaFunction
+#            - Arn
+#          Id: PostedStatusLoadScheduledRule
+
+
+#  PostedStatusLoadPermissionForEventsToInvokeLambda:
+#    Type: 'AWS::Lambda::Permission'
+#    Properties:
+#      Action: 'lambda:InvokeFunction'
+#      FunctionName: !GetAtt
+#        - PostedStatusLoadLambdaFunction
+#        - Arn
+#      Principal: events.amazonaws.com
+#      SourceArn: !GetAtt
+#        - PostedStatusLoadScheduledRule
+#        - Arn
+
+  BlackLineDailyLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-blackline-daily-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-blackline-daily-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 1024
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 900
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  BlackLineDailyScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-blackline-daily-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(0 14 ? * MON-SUN *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - BlackLineDailyLambdaFunction
+            - Arn
+          Id: BlackLineDailyScheduledRule
+
+  BlackLineDailyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - BlackLineDailyLambdaFunction
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - BlackLineDailyScheduledRule
+        - Arn
+
+  GlueFailureNotifyLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-glue-failure-notification-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-glue-failure-notification-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 120
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  GlueJobStatusRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-cwrule-glue-status-${EnvironmentType}"
+      Description: Fetches Glue job Status.
+      EventPattern:
+        source:
+          - aws.glue
+        detail-type:
+          - Glue Job State Change
+        detail:
+          state:
+            - STOPPED
+            - FAILED
+            - SUCCEEDED
+            - TIMEOUT
+          jobName:
+            - !Sub "${ProjectName}-gluejob-sublgr-${EnvironmentType}"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - GlueFailureNotifyLambdaFunction
+            - Arn
+          Id: GlueFailureNotifyLambdaSchedule
+
+  GlueFailureNotifyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - GlueFailureNotifyLambdaFunction
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - GlueJobStatusRule
+        - Arn
+
+  VenTaxReconDailyLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-ven_viactaxrecon_daily-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-ven_viactaxrecon_daily-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 128
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  VenTaxReconDailyScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-ven-tax-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(30 11 ? * MON-SAT *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - VenTaxReconDailyLambdaFunction
+            - Arn
+          Id: VenTaxReconDailyLambdaSchedule
+
+  VenTaxSunReconDailyScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-ven-sun-tax-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(00 16 ? * SUN *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - VenTaxReconDailyLambdaFunction
+            - Arn
+          Id: VenTaxSunReconDailyScheduledRule
+
+  VenTaxReconDailyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - VenTaxReconDailyLambdaFunction
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - VenTaxReconDailyScheduledRule
+        - Arn
+
+  VenTaxSunReconDailyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - VenTaxReconDailyLambdaFunction
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - VenTaxSunReconDailyScheduledRule
+        - Arn
+
+  VoyaTaxReconDailyLambdaFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-voya_viactaxrecon_daily-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-voya_viactaxrecon_daily-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 128
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  VoyaTaxReconDailyScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-voya-tax-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(30 11 ? * mon-sat *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - VoyaTaxReconDailyLambdaFunction
+            - Arn
+          Id: VoyaTaxReconDailyLambdaSchedule
+
+  VoyaTaxReconDailyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - VoyaTaxReconDailyLambdaFunction
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - VoyaTaxReconDailyScheduledRule
+        - Arn
+
+  S3SubLedgerCrawler:
+    Type: 'AWS::Glue::Crawler'
+    Properties:
+      DatabaseName: redshift-vdw
+      Name: !Sub "${ProjectName}-gluecrawl-s3-sublgr-${EnvironmentType}"
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-glue-role-${EnvironmentType}'
+      #TablePrefix: !Ref SublgrS3TablePrefix
+      Targets:
+        S3Targets:
+          - Path: !Sub "s3://${ProjectName}-glprep-distribution-${EnvironmentType}/venerable/subledger/vdw"
+      Tags:
+        VOPS_CMDBAppName: "Venerable Data Warehouse"
+        VOPS_SUB_AppName: "VDW"
+        VOPS_Short_Term: "N"
+        VOPS_Region: !Ref "AWS::Region"
+        VOPS_Environment: !Ref "EnvironmentType"
+
+
+  RedShiftSubLedgerCrawler:
+    Type: 'AWS::Glue::Crawler'
+    DependsOn: GlueConnection
+    Properties:
+      DatabaseName: redshift-vdw
+      Name: !Sub "${ProjectName}-gluecrawl-redshift-sublgr-${EnvironmentType}"
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-glue-role-${EnvironmentType}'
+      #TablePrefix: !Ref SublgrRSTablePrefix
+      Targets:
+        JdbcTargets:
+          - ConnectionName: !Sub "${ProjectName}-gluecon-redshiftcluster-${EnvironmentType}"
+            Path: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]/sub_ledger_hist/gl_sublgrentries
+      Tags:
+        VOPS_CMDBAppName: "Venerable Data Warehouse"
+        VOPS_SUB_AppName: "VDW"
+        VOPS_Short_Term: "N"
+        VOPS_Region: !Ref "AWS::Region"
+        VOPS_Environment: !Ref "EnvironmentType"
+
+  ViacVdwLambdaTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      KmsMasterKeyId: !FindInMap [KmsMasterKeyId, !Ref EnvironmentType, id]
+      Subscription:
+        - Endpoint: dl-vdw-dev@venerablennuity.com
+          Protocol: email
+      TopicName: !Sub "${ProjectName}-lambdatopic-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  ViacVdwRedshiftAlertTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      KmsMasterKeyId: !FindInMap [KmsMasterKeyId, !Ref EnvironmentType, id]
+      Subscription:
+        - Endpoint: dl-vdw-dev@venerablennuity.com
+          Protocol: email
+      TopicName: !Sub "${ProjectName}-redshiftalerttopic-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  EasVdwLambdaGlTaxrptQuarterly:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-gl_taxrpt_quarterly-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-gl_taxrpt_quarterly-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 1024
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          custom_run_date: "2022-04-08"
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+          should_check_for_valid_business_dates: true
+          valid_business_dates: 2022-03-29,2022-03-30,2022-03-31,2022-04-01,2022-04-13,2022-07-14,2022-10-13,2023-01-13
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  TaxRptQuarterlyScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-gl_taxrpt_quarterly-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(00 13 8-15 JAN,APR,JUL,OCT ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - EasVdwLambdaGlTaxrptQuarterly
+            - Arn
+          Id: TaxRptQuarterlyScheduledRule
+
+  TaxrptQuarterlyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - EasVdwLambdaGlTaxrptQuarterly
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - TaxRptQuarterlyScheduledRule
+        - Arn
+
+  EasVdwLambdaVdwdispatchKyriba:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-vdwdispatch-kyriba-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-vdwdispatch-kyriba-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+        - !Ref PandasLayer
+        - !Sub
+            - 'arn:aws:lambda:${AWS::Region}:${AWSLayer}:layer:AWSLambda-Python38-SciPy1x:107'
+            - AWSLayer: !FindInMap [AWSLayerId, !Ref EnvironmentType, id]
+      MemorySize: 512
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          job_payments: !Sub 'eas-${EnvironmentType}-vdw-gluejob-kyriba_pmt'
+          l_topic: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectName}-lambdatopic-${EnvironmentType}'
+          p_topic: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:bas-alerts-sns-kyriba-payment-alert'
+          pay_paid_prefix: kyriba/payments_paid/
+          pay_prefix: kyriba/payments/
+          pay_status_prefix: kyriba/payments_status/
+          port: '5439'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+          sqs_queue: 'viac-glprep-sqs-statemachine-prod-dr.fifo'
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  EasVdwLambdaGlBlacklineWeekly :
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-gl_blackline_weekly-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-gl_blackline_weekly-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 128
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds:
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType
+
+  EasVdwLambdaGlprepDispatch:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-glprep-dispatch-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-glprep-dispatch-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref PandasLayer
+        - !Sub
+            - 'arn:aws:lambda:${AWS::Region}:${AWSLayer}:layer:AWSLambda-Python38-SciPy1x:107'
+            - AWSLayer: !FindInMap [AWSLayerId, !Ref EnvironmentType, id]
+      MemorySize: 512
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds: 
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]         
+      Environment:
+        Variables:
+          job_nm: !Sub "${ProjectName}-gluejob-sublgr-${EnvironmentType}"
+          prefix: venerable/subledger/vdw
+          sqs_queue: !Sub "viac-glprep-sqs-statemachine-prod-${EnvironmentType}.fifo"
+          topic: !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:${ProjectName}-lambdatopic-${EnvironmentType}'
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType  
+
+  EasVdwLambdaRlusViacTaxReconDaily:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      FunctionName: !Sub "${ProjectName}-lambda-rlus_viactaxrecon_daily-${EnvironmentType}"
+      Code:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-lambda-rlus_viactaxrecon_daily-${EnvironmentType}/lambda_function.zip'
+      Handler: lambda_function.lambda_handler
+      Layers:
+        - !Ref Psycopg2Layer
+      MemorySize: 128
+      Role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-lambda-role-${EnvironmentType}'
+      Runtime: python3.8
+      Timeout: 600
+      VpcConfig:
+        SecurityGroupIds: 
+          - !FindInMap [LambdaOutSecurityGroup, !Ref EnvironmentType, id]
+        SubnetIds: !FindInMap [LambdaRSSubnets, !Ref EnvironmentType, id]         
+      Environment:
+        Variables:
+          arn_role: !Sub 'arn:aws:iam::${AWS::AccountId}:role/${ProjectName}-redshift-role-${EnvironmentType}'
+          database: !FindInMap [PrimaryEnvType, !Ref EnvironmentType, id]
+          host: !Join
+            - ""
+            - - !GetAtt
+                - RedshiftCluster
+                - Endpoint.Address
+          port: '5439'
+          bucket: !Sub '${ProjectName}-distribution-${EnvironmentType}'
+          secret_name: !Sub "${ProjectName}-rscluster-${EnvironmentType}"
+      Tags:
+        - Key: "VOPS_CMDBAppName"
+          Value: "Venerable Data Warehouse"
+        - Key: "VOPS_SUB_AppName"
+          Value: "VDW"
+        - Key: "VOPS_Short_Term"
+          Value: "N"
+        - Key: "VOPS_Function"
+          Value: 'Lambda'
+        - Key: "VOPS_DesignPattern"
+          Value: 'Serverless'
+        - Key: "VOPS_Region"
+          Value: !Ref AWS::Region
+        - Key: "VOPS_Environment"
+          Value: !Ref EnvironmentType  
+
+  EasVdwRlusViacTaxReconDailyScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-rlus-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(30 10 ? * MON-SAT *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - EasVdwLambdaRlusViacTaxReconDaily
+            - Arn
+          Id: EasVdwRlusViacTaxReconDailyRun
+
+  EasVdwRlusViacTaxReconDailyPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - EasVdwLambdaRlusViacTaxReconDaily
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - EasVdwRlusViacTaxReconDailyScheduledRule
+        - Arn
+
+  EasVdwRlusViacTaxReconSunScheduledRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      Name: !Sub "${ProjectName}-schedule-sun-rlus-${EnvironmentType}"
+      Description: ScheduledRule
+      ScheduleExpression: cron(00 15 ? * SUN *)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt
+            - EasVdwLambdaRlusViacTaxReconDaily
+            - Arn
+          Id: EasVdwRlusViacTaxReconSunRun
+
+  EasVdwRlusViacTaxReconSunPermissionForEventsToInvokeLambda:
+    Type: 'AWS::Lambda::Permission'
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt
+        - EasVdwLambdaRlusViacTaxReconDaily
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt
+        - EasVdwRlusViacTaxReconSunScheduledRule
+        - Arn
+
+  Psycopg2Layer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.8
+      Content:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-layer-psycopg2-${EnvironmentType}/lambda_layer.zip'
+      Description: psycopg2 lambda layer
+      LayerName: !Sub '${ProjectName}-layer-psycopg2-py38-${EnvironmentType}'
+
+  PandasLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.8
+      Content:
+        S3Bucket: !Sub '${ProjectName}-app-${EnvironmentType}'
+        S3Key: !Sub '${ProjectName}-layer-pandas-${EnvironmentType}/lambda_layer.zip'
+      Description: pandas lambda layer
+      LayerName: !Sub '${ProjectName}-layer-pandas38-${EnvironmentType}'
+      
+Outputs:
+  ClusterEndpoint:
+    Description: Cluster endpoint including Port and DB
+    Value: !Join
+      - ""
+      - - !GetAtt 
+          - RedshiftCluster
+          - Endpoint.Address
+        - ':'
+        - !GetAtt
+          - RedshiftCluster
+          - Endpoint.Port
+        - '/'
+        - !Sub ${EnvironmentType}
+
+  DBClusterIdentifier:
+    Description: Cluster DB Identifier Name withought full address
+    Value: !Ref RedshiftCluster
+
+  JdbcUrl:
+    Description: JDBC URL for Glue Connection
+    Value: !Join
+      - ""
+      - - 'jdbc:redshift://'
+        - !GetAtt 
+          - RedshiftCluster
+          - Endpoint.Address
+        - ':'
+        - !GetAtt
+          - RedshiftCluster
+          - Endpoint.Port
+        - '/'
+        - !Sub ${EnvironmentType}
+
+  RSHostName:
+    Description: Cluster Hotname Full Address
+    Value: !Join
+      - ""
+      - - !GetAtt
+          - RedshiftCluster
+          - Endpoint.Address
+
+  ParameterGroupName:
+    Description: Name of parameter group
+    Value: !Ref RedshiftClusterParameterGroup
+
+  RedshiftClusterSubnetGroupName:
+    Description: Name of cluster subnet group
+    Value: !Ref RedshiftClusterSubnetGroup
